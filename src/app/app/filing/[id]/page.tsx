@@ -6,7 +6,6 @@ import { resolveChildActions } from "@/lib/canonicalMessaging/childActionRules";
 import { canTransition } from "@/modules/filings/filingStateMachine";
 import type { CanonicalMessageHeader } from "@/lib/canonicalMessaging/types";
 import { FilingDetailClient } from "./FilingDetailClient";
-import { FilingCurrencyPanel } from "./FilingCurrencyPanel";
 
 export default async function CustomsFilingDetailPage(props: { params: Promise<{ id: string }> }) {
   const { id } = await props.params;
@@ -161,7 +160,6 @@ export default async function CustomsFilingDetailPage(props: { params: Promise<{
 
   return (
     <div className="space-y-6">
-      <FilingCurrencyPanel filingId={filing.id} />
       <FilingDetailClient
         filing={filingProps}
         shipment={shipmentProps}

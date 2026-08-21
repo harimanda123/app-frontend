@@ -60,19 +60,150 @@ const styles = `
 interface ConfigSelectorModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelect: (country: string, procedureCode: string, messageName: string, messageType: string, schemaVersion: string) => void;
+  onSelect: (country: string, procedureCode: string, messageName: string, release: string, schemaVersion: string) => void;
 }
 
 function ConfigSelectorModal({ isOpen, onClose, onSelect }: ConfigSelectorModalProps) {
-  const [country, setCountry] = useState("NL");
-  const [procedureCode, setProcedureCode] = useState("H1");
-  const [messageName, setMessageName] = useState("IE501");
-  const [messageType, setMessageType] = useState("request");
+  const [country, setCountry] = useState("");
+  const [procedureCode, setProcedureCode] = useState("");
+  const [messageName, setMessageName] = useState("");
+  const [release, setRelease] = useState("");
   const [schemaVersion, setSchemaVersion] = useState("1.0.0");
+  const [availableCountries, setAvailableCountries] = useState<string[]>([]);
+  const [availableProcedures, setAvailableProcedures] = useState<string[]>([]);
+  const [availableMessages, setAvailableMessages] = useState<string[]>([]);
+  const [availableReleases, setAvailableReleases] = useState<string[]>([]);
+  const [allProcedureData, setAllProcedureData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingProcedures, setLoadingProcedures] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [loadingReleases, setLoadingReleases] = useState(false);
+
+  // Fetch all procedure config data on mount
+  React.useEffect(() => {
+    if (isOpen) {
+      fetchAllProcedureData();
+    }
+  }, [isOpen]);
+
+  // Fetch procedures when country changes
+  React.useEffect(() => {
+    if (country) {
+      fetchAvailableProcedures(country);
+      setProcedureCode("");
+      setMessageName("");
+    } else {
+      setAvailableProcedures([]);
+      setProcedureCode("");
+      setMessageName("");
+    }
+  }, [country]);
+
+  // Fetch messages when country and procedureCode change
+  React.useEffect(() => {
+    if (country && procedureCode) {
+      fetchAvailableMessages(country, procedureCode);
+      fetchAvailableReleases(country, procedureCode);
+    } else {
+      setAvailableMessages([]);
+      setMessageName("");
+      setAvailableReleases([]);
+      setRelease("");
+    }
+  }, [country, procedureCode]);
+
+  const fetchAllProcedureData = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/filing-config/procedure-config', {
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const rows = data.rows || [];
+        setAllProcedureData(rows);
+        
+        // Extract unique countries
+        const countries = [...new Set(rows
+          .filter((row: any) => row.isActive !== false)
+          .map((row: any) => row.country)
+          .filter(Boolean)
+        )].sort();
+        setAvailableCountries(countries as string[]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch procedure data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAvailableProcedures = (countryCode: string) => {
+    setLoadingProcedures(true);
+    try {
+      const filteredRows = allProcedureData.filter((row: any) => 
+        row.country === countryCode && 
+        row.isActive !== false
+      );
+      const procedures = [...new Set(filteredRows.map((row: any) => row.procedureCode).filter(Boolean))];
+      setAvailableProcedures(procedures as string[]);
+    } catch (error) {
+      console.error('Failed to filter procedures:', error);
+      setAvailableProcedures([]);
+    } finally {
+      setLoadingProcedures(false);
+    }
+  };
+
+  const fetchAvailableMessages = (countryCode: string, procedure: string) => {
+    setLoadingMessages(true);
+    try {
+      const filteredRows = allProcedureData.filter((row: any) => 
+        row.country === countryCode && 
+        row.procedureCode === procedure &&
+        row.isActive !== false
+      );
+      const messages = [...new Set(filteredRows.map((row: any) => row.messageName).filter(Boolean))];
+      setAvailableMessages(messages as string[]);
+    } catch (error) {
+      console.error('Failed to filter messages:', error);
+      setAvailableMessages([]);
+    } finally {
+      setLoadingMessages(false);
+    }
+  };
+
+  const fetchAvailableReleases = async (countryCode: string, procedure: string) => {
+    setLoadingReleases(true);
+    try {
+      const response = await fetch('/api/filing-config/country-customs-version', {
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const rows = data.rows || [];
+        const filteredRows = rows.filter((row: any) => 
+          row.country === countryCode && 
+          row.procedureCode === procedure &&
+          row.isActive !== false
+        );
+        const releases = filteredRows
+          .map((row: any) => row.release)
+          .filter(Boolean)
+          .sort((a: string, b: string) => b.localeCompare(a)); // Sort descending (latest first)
+        setAvailableReleases(releases as string[]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch releases:', error);
+      setAvailableReleases([]);
+    } finally {
+      setLoadingReleases(false);
+    }
+  };
 
   const handleSubmit = () => {
-    if (country && procedureCode && messageName && messageType && schemaVersion) {
-      onSelect(country, procedureCode, messageName, messageType, schemaVersion);
+    if (country && procedureCode && messageName && release && schemaVersion) {
+      onSelect(country, procedureCode, messageName, release, schemaVersion);
     }
   };
 
@@ -89,45 +220,120 @@ function ConfigSelectorModal({ isOpen, onClose, onSelect }: ConfigSelectorModalP
         <div className="space-y-4">
           <div>
             <label className="text-xs font-medium text-ink">Country <span className="text-red-600">*</span></label>
-            <Input
-              value={country}
-              onChange={(e) => setCountry(e.target.value.toUpperCase())}
-              placeholder="e.g., NL, IE, FR"
-              maxLength={2}
-              className="text-xs mt-1"
-            />
+            {loading ? (
+              <div className="text-xs text-ink-muted py-2">Loading countries...</div>
+            ) : availableCountries.length > 0 ? (
+              <select
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">Select country...</option>
+                {availableCountries.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <Input
+                value={country}
+                onChange={(e) => setCountry(e.target.value.toUpperCase())}
+                placeholder="e.g., NL, IE, FR, US"
+                maxLength={2}
+                className="text-xs mt-1"
+              />
+            )}
           </div>
 
           <div>
             <label className="text-xs font-medium text-ink">Procedure Code <span className="text-red-600">*</span></label>
-            <Input
-              value={procedureCode}
-              onChange={(e) => setProcedureCode(e.target.value.toUpperCase())}
-              placeholder="e.g., H1, H4, H7"
-              className="text-xs mt-1"
-            />
+            {!country ? (
+              <div className="text-xs text-ink-muted py-2 px-3 border border-border rounded-md bg-surface-muted">
+                Select Country first
+              </div>
+            ) : loadingProcedures ? (
+              <div className="text-xs text-ink-muted py-2">Loading procedures...</div>
+            ) : availableProcedures.length > 0 ? (
+              <select
+                value={procedureCode}
+                onChange={(e) => setProcedureCode(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">Select procedure...</option>
+                {availableProcedures.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <Input
+                value={procedureCode}
+                onChange={(e) => setProcedureCode(e.target.value.toUpperCase())}
+                placeholder="e.g., IMPORT, EXPORT, NCTS"
+                className="text-xs mt-1"
+              />
+            )}
           </div>
 
           <div>
-            <label className="text-xs font-medium text-ink">Message Name <span className="text-xs font-medium text-ink">*</span></label>
-            <Input
-              value={messageName}
-              onChange={(e) => setMessageName(e.target.value.toUpperCase())}
-              placeholder="e.g., IE501, IE503, IE015"
-              className="text-xs mt-1"
-            />
+            <label className="text-xs font-medium text-ink">Message Name <span className="text-red-600">*</span></label>
+            {!country || !procedureCode ? (
+              <div className="text-xs text-ink-muted py-2 px-3 border border-border rounded-md bg-surface-muted">
+                Select Country and Procedure Code first
+              </div>
+            ) : loadingMessages ? (
+              <div className="text-xs text-ink-muted py-2">Loading messages...</div>
+            ) : availableMessages.length > 0 ? (
+              <select
+                value={messageName}
+                onChange={(e) => setMessageName(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">Select message...</option>
+                {availableMessages.map((msg) => (
+                  <option key={msg} value={msg}>
+                    {msg}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <Input
+                value={messageName}
+                onChange={(e) => setMessageName(e.target.value.toUpperCase())}
+                placeholder="e.g., IE501, IE503, IE015"
+                className="text-xs mt-1"
+              />
+            )}
           </div>
 
           <div>
-            <label className="text-xs font-medium text-ink">Message Type <span className="text-red-600">*</span></label>
-            <select
-              value={messageType}
-              onChange={(e) => setMessageType(e.target.value)}
-              className="w-full px-3 py-2 text-xs border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-            >
-              <option value="request">Request</option>
-              <option value="response">Response</option>
-            </select>
+            <label className="text-xs font-medium text-ink">Release <span className="text-red-600">*</span></label>
+            {!country || !procedureCode ? (
+              <div className="text-xs text-ink-muted py-2 px-3 border border-border rounded-md bg-surface-muted">
+                Select Country and Procedure Code first
+              </div>
+            ) : loadingReleases ? (
+              <div className="text-xs text-ink-muted py-2">Loading releases...</div>
+            ) : availableReleases.length > 0 ? (
+              <select
+                value={release}
+                onChange={(e) => setRelease(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">Select release...</option>
+                {availableReleases.map((rel) => (
+                  <option key={rel} value={rel}>
+                    {rel}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="text-xs text-ink-muted py-2 px-3 border border-border rounded-md bg-surface-muted">
+                No releases available for this country and procedure
+              </div>
+            )}
           </div>
 
           <div>
@@ -150,7 +356,7 @@ function ConfigSelectorModal({ isOpen, onClose, onSelect }: ConfigSelectorModalP
           variant="primary" 
           size="sm" 
           onClick={handleSubmit}
-          disabled={!country || !procedureCode || !messageName || !messageType || !schemaVersion}
+          disabled={!country || !procedureCode || !messageName || !release || !schemaVersion}
         >
           Continue
         </Button>
@@ -169,7 +375,7 @@ export default function UIConfigEditor({ configId, onBack }: UIConfigEditorProps
   const [country, setCountry] = useState<string>("");
   const [procedureCode, setProcedureCode] = useState<string>("");
   const [messageName, setMessageName] = useState<string>("");
-  const [messageType, setMessageType] = useState<string>("");
+  const [release, setRelease] = useState<string>("");
   const [schemaVersion, setSchemaVersion] = useState<string>("");
   const [showSelectorModal, setShowSelectorModal] = useState(!configId);
   
@@ -205,19 +411,19 @@ export default function UIConfigEditor({ configId, onBack }: UIConfigEditorProps
   useEffect(() => {
     if (configId) {
       loadExistingConfig();
-    } else if (country && procedureCode && messageName && messageType) {
+    } else if (country && procedureCode && messageName && release) {
       initializeNewConfig();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configId, country, procedureCode, messageName, messageType]);
+  }, [configId, country, procedureCode, messageName, release]);
 
   // Load schema when target is selected
   useEffect(() => {
-    if (country && procedureCode && messageName && messageType && schemaVersion) {
+    if (country && procedureCode && messageName && release && schemaVersion) {
       loadSchema();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [country, procedureCode, messageName, messageType, schemaVersion]);
+  }, [country, procedureCode, messageName, release, schemaVersion]);
 
   // Track unsaved changes
   useEffect(() => {
@@ -246,7 +452,7 @@ export default function UIConfigEditor({ configId, onBack }: UIConfigEditorProps
       setCountry(data.country);
       setProcedureCode(data.procedureCode);
       setMessageName(data.messageName);
-      setMessageType(data.messageType);
+      setRelease(data.release);
       // Fix version: database has integer 1, but folder is "1.0.0"
       const versionStr = data.version?.toString() || "1";
       const normalizedVersion = versionStr.includes('.') ? versionStr : `${versionStr}.0.0`;
@@ -319,7 +525,7 @@ export default function UIConfigEditor({ configId, onBack }: UIConfigEditorProps
       procedure: procedureCode,
       message: messageName,
       layoutMode: 'single-page', // Default layout
-      tags: [messageType]
+      tags: [release]
     });
     
     setConfig(newConfig);
@@ -328,9 +534,9 @@ export default function UIConfigEditor({ configId, onBack }: UIConfigEditorProps
 
   const loadSchema = async () => {
     // Validate all required params before attempting to load
-    if (!country || !procedureCode || !messageName || !messageType || !schemaVersion) {
+    if (!country || !procedureCode || !messageName || !release || !schemaVersion) {
       console.warn('⚠️ Schema load skipped - missing params:', { 
-        country, procedureCode, messageName, messageType, schemaVersion 
+        country, procedureCode, messageName, release, schemaVersion 
       });
       return;
     }
@@ -339,9 +545,9 @@ export default function UIConfigEditor({ configId, onBack }: UIConfigEditorProps
     setSchemaError(null);
     
     try {
-      const url = `/api/schemas/${country}/${procedureCode}/${messageName}/${messageType}?version=${schemaVersion}`;
+      const url = `/api/schemas/${country}/${procedureCode}/${messageName}/${release}?version=${schemaVersion}`;
       console.log('🔍 Loading schema from:', url);
-      console.log('📋 All params:', { country, procedureCode, messageName, messageType, schemaVersion });
+      console.log('📋 All params:', { country, procedureCode, messageName, release, schemaVersion });
       
       const response = await fetch(url);
       
@@ -385,13 +591,13 @@ export default function UIConfigEditor({ configId, onBack }: UIConfigEditorProps
     newCountry: string,
     newProcedureCode: string,
     newMessageName: string,
-    newMessageType: string,
+    newRelease: string,
     newSchemaVersion: string
   ) => {
     setCountry(newCountry);
     setProcedureCode(newProcedureCode);
     setMessageName(newMessageName);
-    setMessageType(newMessageType);
+    setRelease(newRelease);
     setSchemaVersion(newSchemaVersion);
     setShowSelectorModal(false);
   };
@@ -504,7 +710,7 @@ export default function UIConfigEditor({ configId, onBack }: UIConfigEditorProps
         country,
         procedureCode,
         messageName,
-        messageType,
+        release,
         configData: configToSave,
         isActive,
         version: parseInt(schemaVersion) || 1
@@ -571,7 +777,7 @@ export default function UIConfigEditor({ configId, onBack }: UIConfigEditorProps
     hasWarnings: validationWarnings.length > 0
   } : null;
 
-  if (!country || !procedureCode || !messageName || !messageType || !schemaVersion) {
+  if (!country || !procedureCode || !messageName || !release || !schemaVersion) {
     return (
       <ConfigSelectorModal
         isOpen={showSelectorModal}
@@ -587,7 +793,7 @@ export default function UIConfigEditor({ configId, onBack }: UIConfigEditorProps
         <div className="text-center">
           <div className="text-sm text-ink-muted mb-2">Loading schema...</div>
           <div className="text-xs text-ink-muted">
-            {country}/{procedureCode}/{messageName}/{messageType}
+            {country}/{procedureCode}/{messageName}/{release}
           </div>
         </div>
       </div>
@@ -822,7 +1028,7 @@ export default function UIConfigEditor({ configId, onBack }: UIConfigEditorProps
           <span><strong>Country:</strong> {country}</span>
           <span><strong>Procedure:</strong> {procedureCode}</span>
           <span><strong>Message:</strong> {messageName}</span>
-          <span><strong>Type:</strong> {messageType}</span>
+          <span><strong>Type:</strong> {release}</span>
           <span><strong>Version:</strong> {schemaVersion}</span>
         </div>
       </div>
@@ -1064,3 +1270,4 @@ export default function UIConfigEditor({ configId, onBack }: UIConfigEditorProps
     </div>
   );
 }
+

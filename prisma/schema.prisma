@@ -1,16 +1,11 @@
 datasource db {
-  provider   = "postgresql"
-  url        = env("DATABASE_URL")
-  directUrl  = env("DIRECT_URL")
-  // Supabase ships pgvector; declaring it here lets `prisma migrate` track
-  // that the extension is expected without Prisma trying to manage the
-  // vector column itself (that stays Unsupported -- see AccountMemory).
-  extensions = [vector]
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"]
+  provider = "prisma-client-js"
 }
 
 /// Controls whether a workspace holds real operational data or clearly-labelled
@@ -924,6 +919,10 @@ model CustomsFiling {
   /// Message name selected for this filing (e.g., "IE015", "IE501")
   /// Used to determine which canonical message schema to use for transmission
   messageName String?
+
+  /// Release version for the customs procedure (e.g., "1.0", "2.0")
+  /// Maps to FilingCountryCustomsVersion.release
+  release String? @default("1.0")
 
   // ========================================================================
   // LEGACY FIELDS (kept temporarily for backwards compatibility)
@@ -2287,9 +2286,9 @@ model AccountEmbargoConfig {
   serverScreeningEnabled  Boolean @default(true)
   genericExportLdEnabled  Boolean @default(false)
 
-  audited                Boolean @default(true)
+  audited                Boolean @default(false)
   emailAlertEnabled      Boolean @default(false)
-  generalAuditLogEnabled Boolean @default(true)
+  generalAuditLogEnabled Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4650,13 +4649,13 @@ model ScreeningEntity {
   address            String?
   city               String?
   country            String?
-  citation           String? // Federal Register / denial-order citation, when the source list carries one (e.g. BIS CSL)
-  agency             String? // issuing agency/source, as reported by the source list
-  effectiveDate      DateTime? // denial order effective/start date, when the source list carries one
-  expirationDate     DateTime? // denial order expiration/end date, when the source list carries one
   nationalityCountry String?
   programCodes       String[] // e.g. ["IRAN", "SDGT"]
   remarks            String?   @db.Text
+  agency             String?
+  citation           String?
+  effectiveDate      DateTime?
+  expirationDate     DateTime?
   publicationStatus  String    @default("DRAFT") // DRAFT | PUBLISHED | SUPERSEDED
   publishedAt        DateTime?
   supersededAt       DateTime?
@@ -4834,11 +4833,11 @@ model RestrictedPartyMatch {
   entityType   String
   programCodes String[]
 
-  denialType String? // PARTIAL — no source field backs this yet
-  agency     String?
-  citation   String?
-  effectiveDate  DateTime? // copied from ScreeningEntity at match time
-  expirationDate DateTime? // copied from ScreeningEntity at match time
+  denialType     String? // PARTIAL — no source field backs this yet
+  agency         String?
+  citation       String?
+  effectiveDate  DateTime?
+  expirationDate DateTime?
 
   suppressedByApprovedParty Boolean @default(false)
   suppressingDispositionId  String?
@@ -5577,6 +5576,8 @@ model AccountMemory {
   subjectType        AccountMemorySubjectType
   subjectId          String?
   content            String
+  contentTsv         String?                  @db.Text
+  embeddingVector    Float[]                  @default([])
   confidence         Float                    @default(1.0)
   validFrom          DateTime                 @default(now())
   validUntil         DateTime?
@@ -5585,23 +5586,8 @@ model AccountMemory {
   supersedesMemoryId String?
   supersedesMemory   AccountMemory?           @relation("MemorySupersession", fields: [supersedesMemoryId], references: [id], onDelete: SetNull)
   supersededBy       AccountMemory[]          @relation("MemorySupersession")
-  /// Legacy plain-array embedding, kept for backward-compatible reads/exports.
-  /// Retrieval no longer scans this column -- see embeddingVector.
   embedding          Float[]                  @default([])
-  /// Superseded by contentTsv (real Postgres FTS). Kept only so old rows that
-  /// predate the generated tsvector column still have a lowercase fallback.
   searchVector       String?
-  /// pgvector column queried by findVectorMatches via the `<=>` operator.
-  /// Unsupported because Prisma Client has no native vector type; written via
-  /// raw SQL in MemoryRepository.createMemory, indexed with HNSW (see migration).
-  embeddingVector    Unsupported("vector(768)")?
-  /// Generated column (STORED, from `content`) backing real Postgres full-text
-  /// search; GIN-indexed. Populated by Postgres on write, never by the app.
-  /// The dbgenerated default below mirrors the migration's GENERATED ALWAYS AS
-  /// STORED expression so `prisma migrate diff` sees this column as in sync --
-  /// it does not (and must not) make Prisma try to manage the column itself;
-  /// `migrate dev` cannot create a STORED generated column, only a raw migration can.
-  contentTsv         Unsupported("tsvector")? @default(dbgenerated("to_tsvector('simple'::regconfig, ((COALESCE(content, ''::text) || ' '::text) || COALESCE(\"subjectId\", ''::text)))"))
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
   evidence           MemoryEvidence[]
@@ -5610,7 +5596,8 @@ model AccountMemory {
   @@index([accountId, type])
   @@index([accountId, subjectType, subjectId])
   @@index([supersedesMemoryId])
-  @@index([contentTsv], type: Gin, map: "AccountMemory_contentTsv_gin_idx")
+  @@index([contentTsv])
+  @@index([embeddingVector])
 }
 
 model MemoryEvidence {
@@ -5627,4 +5614,56 @@ model MemoryEvidence {
 
   @@index([accountId])
   @@index([memoryId])
+}
+
+/// Filing Country Customs Version
+/// Stores customs versions by country and procedure code
+model FilingCountryCustomsVersion {
+  id            String   @id @default(cuid())
+  country       String   // ISO country code (e.g., NL, IE, FR)
+  procedureCode String   // Procedure code (e.g., H1, H4, H7, IMPORT, EXPORT)
+  release       String   // Release version (e.g., 5.28.0, 1.0.0)
+  validFrom     DateTime // Start date of validity
+  validTo       DateTime? // End date of validity (null for current version)
+  
+  // Metadata
+  description   String?  // Optional description
+  isActive      Boolean  @default(true) // Whether this version is currently active
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  createdBy     String?
+  updatedBy     String?
+
+  // Relations
+  customerVersions FilingCustomerCustomsVersion[]
+
+  @@unique([country, procedureCode, release])
+  @@index([country, procedureCode])
+  @@index([isActive])
+  @@index([validFrom, validTo])
+}
+
+/// Filing Customer Customs Version
+/// Maps customers to specific customs versions
+model FilingCustomerCustomsVersion {
+  id                        String   @id @default(cuid())
+  customerId                String?  // Customer/Account ID (nullable when applyToAllCustomers is true)
+  filingCountryCustomsId    String   // Foreign key to FilingCountryCustomsVersion
+  
+  // Relations
+  countryCustomsVersion FilingCountryCustomsVersion @relation(fields: [filingCountryCustomsId], references: [id], onDelete: Cascade)
+  
+  // Metadata
+  applyToAllCustomers   Boolean  @default(false) // When true, this version applies to all customers
+  notes                 String?  // Optional notes
+  isActive              Boolean  @default(true) // Whether this mapping is currently active
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  createdBy             String?
+  updatedBy             String?
+
+  @@index([customerId])
+  @@index([filingCountryCustomsId])
+  @@index([isActive])
+  @@index([applyToAllCustomers])
 }

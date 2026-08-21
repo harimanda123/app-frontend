@@ -254,36 +254,72 @@ export default function DefaultSchemaRenderer({
         </button>
 
         {/* Section content */}
-        {isExpanded && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pl-6">
-            {Object.entries(objSchema.properties).map(([fieldName, fieldSchema]: [string, any]) => {
-              const fieldPath = path ? `${path}.${fieldName}` : fieldName;
-              const isRequired = required.includes(fieldName);
+        {isExpanded && (() => {
+          // Separate fields into primitives and complex types
+          const primitiveFields: Array<[string, any]> = [];
+          const complexFields: Array<[string, any]> = [];
 
-              // Skip if it's a nested object (render separately)
-              if (fieldSchema.type === "object" && fieldSchema.properties) {
-                return renderObject(fieldSchema, fieldPath, fieldName, depth + 1);
-              }
+          Object.entries(objSchema.properties).forEach(([fieldName, fieldSchema]: [string, any]) => {
+            const isObject = fieldSchema.properties && Object.keys(fieldSchema.properties).length > 0;
+            const isArray = fieldSchema.type === "array";
 
-              // Skip arrays for now (complex handling needed)
-              if (fieldSchema.type === "array") {
-                return (
-                  <div key={fieldPath} className="col-span-2 p-2 bg-surface-muted rounded">
-                    <p className="text-xs text-ink-muted">
-                      Array field: {fieldName} (configure via UI Config Editor)
-                    </p>
-                  </div>
-                );
-              }
+            if (isObject || isArray) {
+              complexFields.push([fieldName, fieldSchema]);
+            } else {
+              primitiveFields.push([fieldName, fieldSchema]);
+            }
+          });
 
-              return (
-                <div key={fieldPath}>
-                  {renderField(fieldName, fieldSchema, fieldPath, isRequired)}
+          return (
+            <div className="space-y-6 pl-6">
+              {/* Primitives in 2-column grid */}
+              {primitiveFields.length > 0 && (
+                <div className="grid grid-cols-3 gap-x-6 gap-y-5">
+                  {primitiveFields.map(([fieldName, fieldSchema]) => {
+                    const fieldPath = path ? `${path}.${fieldName}` : fieldName;
+                    const isRequired = required.includes(fieldName);
+                    return (
+                      <div key={fieldPath}>
+                        {renderField(fieldName, fieldSchema, fieldPath, isRequired)}
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
-        )}
+              )}
+
+              {/* Complex fields (objects/arrays) stacked vertically */}
+              {complexFields.length > 0 && (
+                <div className="space-y-5">
+                  {complexFields.map(([fieldName, fieldSchema]) => {
+                    const fieldPath = path ? `${path}.${fieldName}` : fieldName;
+
+                    // Handle nested objects
+                    if (fieldSchema.properties && Object.keys(fieldSchema.properties).length > 0) {
+                      return (
+                        <React.Fragment key={fieldPath}>
+                          {renderObject(fieldSchema, fieldPath, fieldName, depth + 1)}
+                        </React.Fragment>
+                      );
+                    }
+
+                    // Handle arrays
+                    if (fieldSchema.type === "array") {
+                      return (
+                        <div key={fieldPath} className="p-2 bg-surface-muted rounded">
+                          <p className="text-xs text-ink-muted">
+                            Array field: {fieldName} (configure via UI Config Editor)
+                          </p>
+                        </div>
+                      );
+                    }
+
+                    return null;
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     );
   };
@@ -319,7 +355,7 @@ export default function DefaultSchemaRenderer({
       {effectiveSchema.properties && (
         <div>
           {Object.entries(effectiveSchema.properties).map(([sectionName, sectionSchema]: [string, any]) => {
-            if (sectionSchema.type === "object" && sectionSchema.properties) {
+            if (sectionSchema.properties && Object.keys(sectionSchema.properties).length > 0) {
               return renderObject(sectionSchema, sectionName, sectionName, 0);
             }
             return null;

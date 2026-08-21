@@ -44,10 +44,10 @@ export const POST = withAuthenticatedRoute<Params>(async ({ req, ctx, params, re
   if ("response" in body) return body.response;
 
   try {
-    // Add createdBy from authenticated user
+    // Add createdBy from authenticated user (using email as human-readable identifier)
     const dataWithUser = {
       ...(body.data as Record<string, unknown>),
-      createdBy: ctx.userId,
+      createdBy: ctx.email,
     };
     const row = await table.create(dataWithUser);
     return NextResponse.json({ row, requestId }, { status: 201 });

@@ -305,6 +305,57 @@ export const POST = withAuthenticatedRoute(async ({ req, ctx }) => {
       );
     }
 
+    // Find the CountryCustomsVersion
+    const countryCustomsVersion = await db.filingCountryCustomsVersion.findFirst({
+      where: {
+        country,
+        procedureCode,
+        isActive: true,
+      },
+      orderBy: { createdAt: "desc" }, // Get the latest version
+    });
+
+    if (!countryCustomsVersion) {
+      return NextResponse.json(
+        { error: `Customs Version not configured for ${country}/${procedureCode}. Please contact your administrator.` },
+        { status: 400 }
+      );
+    }
+
+    // Check if customer/account has access to this customs version
+    // First check for customer-specific entry, then "apply to all" as fallback
+    let customerCustomsVersion = await db.filingCustomerCustomsVersion.findFirst({
+      where: {
+        customerId: ctx.accountId, // customerId field stores Account ID
+        filingCountryCustomsId: countryCustomsVersion.id,
+        isActive: true,
+      },
+      include: {
+        countryCustomsVersion: true,
+      },
+    });
+
+    // If no customer-specific entry found, check for "apply to all customers" entry
+    if (!customerCustomsVersion) {
+      customerCustomsVersion = await db.filingCustomerCustomsVersion.findFirst({
+        where: {
+          applyToAllCustomers: true,
+          filingCountryCustomsId: countryCustomsVersion.id,
+          isActive: true,
+        },
+        include: {
+          countryCustomsVersion: true,
+        },
+      });
+    }
+
+    if (!customerCustomsVersion) {
+      return NextResponse.json(
+        { error: `Customs Version not configured for your account (${country}/${procedureCode}). Please contact your administrator to configure access.` },
+        { status: 403 }
+      );
+    }
+
     const timestamp = Date.now().toString(36).toUpperCase();
     const randomSuffix = randomUUID().slice(0, 6).toUpperCase();
     const standaloneEntryNumber = `${country}-${procedureCode}-${timestamp}-${randomSuffix}`;
@@ -318,6 +369,7 @@ export const POST = withAuthenticatedRoute(async ({ req, ctx }) => {
         country,
         procedureCode, // Now stores transaction type (IMPORT, EXPORT, etc.)
         messageName,
+        release: customerCustomsVersion.countryCustomsVersion.release, // Map the release code
         filingType: filingType || "Standard",
         filingStatus: "Draft",
         preparedByUserId: ctx.userId,

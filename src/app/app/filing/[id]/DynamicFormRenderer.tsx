@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import LineItemsManager from "./LineItemsManager";
 import DefaultSchemaRenderer from "./DefaultSchemaRenderer";
+import EnhancedSchemaRenderer from "./EnhancedSchemaRenderer";
 
 interface UIFieldConfig {
   id: string;
@@ -181,7 +182,7 @@ export default function DynamicFormRenderer({
 
   if (loading) return <div className="flex items-center justify-center p-8"><div className="text-sm text-ink-muted">Loading form configuration...</div></div>;
   if (error) return <div className="p-4 bg-red-50 border border-red-200 rounded-lg"><p className="text-sm text-red-800">Error loading form: {error}</p></div>;
-  if (useDefaultRenderer && schema) return <DefaultSchemaRenderer schema={schema} data={data} onChange={onChange} onSave={onSave} readOnly={readOnly} maxDepth={3} />;
+  if (useDefaultRenderer && schema) return <EnhancedSchemaRenderer schema={schema} data={data} onChange={onChange} onSave={onSave} readOnly={readOnly} maxDepth={10} />;
   if (!uiConfig) return <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg"><p className="text-sm text-yellow-800">No form configuration or schema available for {country} / {procedureCode} / {messageName} ({messageType})</p><p className="text-xs text-yellow-700 mt-2">Please configure fields in the Filing Configuration section.</p></div>;
 
   const sectionTitles: Record<string, string> = {

@@ -73,10 +73,14 @@ export interface SubFieldMeta {
 export interface FieldMeta {
   key: string;
   label: string;
-  type: "text" | "boolean" | "fieldArray";
+  type: "text" | "boolean" | "fieldArray" | "select" | "date";
   help?: string;
   /** Only present when type === "fieldArray": the shape of each entry in the array. */
   itemFields?: SubFieldMeta[];
+  /** Only present when type === "select": the dropdown options. */
+  options?: string[];
+  /** Only present when type === "select": map of value -> display label. */
+  optionLabels?: Record<string, string>;
 }
 
 export interface TableMeta {
@@ -138,14 +142,18 @@ export function FilingConfigClient({ tables }: { tables: TableMeta[] }) {
   return (
     <div className="space-y-6 max-w-[1400px] mx-auto pb-12">
       <div className="bg-white p-6 rounded-2xl border border-border shadow-2xs">
-        <div className="flex items-center space-x-2">
-          <Settings2 className="w-5 h-5 text-brand" />
-          <h1 className="text-2xl font-extrabold text-ink tracking-tight">{t.filingConfig?.title ?? "Filing Configuration"}</h1>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center space-x-2">
+              <Settings2 className="w-5 h-5 text-brand" />
+              <h1 className="text-2xl font-extrabold text-ink tracking-tight">{t.filingConfig?.title ?? "Filing Configuration"}</h1>
+            </div>
+            <p className="text-xs text-ink-muted mt-1">
+              {t.filingConfig?.subtitle ??
+                "Global reference data every tenant's customs filing workflow resolves against. Changes here take effect immediately, for every account."}
+            </p>
+          </div>
         </div>
-        <p className="text-xs text-ink-muted mt-1">
-          {t.filingConfig?.subtitle ??
-            "Global reference data every tenant's customs filing workflow resolves against. Changes here take effect immediately, for every account."}
-        </p>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -428,28 +436,126 @@ function RowFormModal({
   const [draft, setDraft] = useState<Row>(() => (initial ? { ...initial } : emptyDraft(table.fields)));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [transactionTypeCodes, setTransactionTypeCodes] = useState<string[]>([]);
+  
+  // Cascading dropdown state
+  const [allProcedureData, setAllProcedureData] = useState<any[]>([]);
+  const [availableCountries, setAvailableCountries] = useState<string[]>([]);
+  const [availableProcedures, setAvailableProcedures] = useState<string[]>([]);
+  const [availableMessages, setAvailableMessages] = useState<string[]>([]);
+  const [loadingCascadeData, setLoadingCascadeData] = useState(false);
 
-  // Fetch transaction type codes for procedureCode dropdown
+  // Action dropdown state
+  const [availableActions, setAvailableActions] = useState<string[]>([]);
+  const [loadingActions, setLoadingActions] = useState(false);
+
+  // Check if table has cascading fields
+  const hasCountryField = table.fields.some(f => f.key === "country");
+  const hasProcedureCodeField = table.fields.some(f => f.key === "procedureCode");
+  const hasMessageNameField = table.fields.some(f => f.key === "messageName");
+  const needsCascadingDropdowns = hasCountryField && hasProcedureCodeField && hasMessageNameField;
+
+  // Check if table has action field
+  const hasActionField = table.fields.some(f => f.key === "action");
+
+  // Fetch procedure data for cascading dropdowns
   useEffect(() => {
-    // Fetch codes for any table that has a procedureCode field
-    const hasProcedureCodeField = table.fields.some(f => f.key === "procedureCode");
-    if (hasProcedureCodeField) {
-      console.log("🔍 Fetching transaction types for", table.key, "table...");
-      fetch("/api/filing-config/transaction-types", {
-        credentials: "include" // Ensure cookies are sent
-      })
-        .then(res => {
-          console.log("📥 Transaction types response status:", res.status);
-          return res.json();
-        })
-        .then(data => {
-          console.log("✅ Transaction types loaded:", data.codes);
-          setTransactionTypeCodes(data.codes || []);
-        })
-        .catch(err => console.error("❌ Failed to load transaction types:", err));
+    if (needsCascadingDropdowns) {
+      fetchProcedureData();
     }
-  }, [table.key, table.fields]);
+  }, [needsCascadingDropdowns]);
+
+  // Fetch action catalog data
+  useEffect(() => {
+    if (hasActionField) {
+      fetchActionCatalog();
+    }
+  }, [hasActionField]);
+
+  // Update available procedures when country changes
+  useEffect(() => {
+    if (needsCascadingDropdowns && draft.country) {
+      updateAvailableProcedures(String(draft.country));
+    } else {
+      setAvailableProcedures([]);
+    }
+  }, [draft.country, allProcedureData, needsCascadingDropdowns]);
+
+  // Update available messages when country or procedureCode changes
+  useEffect(() => {
+    if (needsCascadingDropdowns && draft.country && draft.procedureCode) {
+      updateAvailableMessages(String(draft.country), String(draft.procedureCode));
+    } else {
+      setAvailableMessages([]);
+    }
+  }, [draft.country, draft.procedureCode, allProcedureData, needsCascadingDropdowns]);
+
+  const fetchProcedureData = async () => {
+    setLoadingCascadeData(true);
+    try {
+      const response = await fetch('/api/filing-config/procedure-config', {
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const rows = data.rows || [];
+        setAllProcedureData(rows);
+        
+        // Extract unique countries
+        const countries = [...new Set(rows
+          .filter((row: any) => row.isActive !== false)
+          .map((row: any) => row.country)
+          .filter(Boolean)
+        )].sort();
+        setAvailableCountries(countries as string[]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch procedure data:', error);
+    } finally {
+      setLoadingCascadeData(false);
+    }
+  };
+
+  const updateAvailableProcedures = (countryCode: string) => {
+    const filteredRows = allProcedureData.filter((row: any) => 
+      row.country === countryCode && 
+      row.isActive !== false
+    );
+    const procedures = [...new Set(filteredRows.map((row: any) => row.procedureCode).filter(Boolean))];
+    setAvailableProcedures(procedures as string[]);
+  };
+
+  const updateAvailableMessages = (countryCode: string, procedure: string) => {
+    const filteredRows = allProcedureData.filter((row: any) => 
+      row.country === countryCode && 
+      row.procedureCode === procedure &&
+      row.isActive !== false
+    );
+    const messages = [...new Set(filteredRows.map((row: any) => row.messageName).filter(Boolean))];
+    setAvailableMessages(messages as string[]);
+  };
+
+  const fetchActionCatalog = async () => {
+    setLoadingActions(true);
+    try {
+      const response = await fetch('/api/filing-config/action-catalog', {
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const rows = data.rows || [];
+        const actions = rows
+          .filter((row: any) => row.isActive !== false)
+          .map((row: any) => row.code)
+          .filter(Boolean)
+          .sort();
+        setAvailableActions(actions as string[]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch action catalog:', error);
+    } finally {
+      setLoadingActions(false);
+    }
+  };
 
   async function handleSubmit() {
     setBusy(true);
@@ -489,7 +595,10 @@ function RowFormModal({
       <ModalBody className="space-y-3">
         {table.fields.map((f) => {
           const disabled = isEdit && f.key === table.idField;
+          const isCountryField = f.key === "country";
           const isProcedureCodeField = f.key === "procedureCode";
+          const isMessageNameField = f.key === "messageName";
+          const isActionField = f.key === "action";
           
           return (
             <div key={f.key} className="space-y-1">
@@ -503,20 +612,119 @@ function RowFormModal({
                   <option value="false">{t.filingConfig?.no ?? "No"}</option>
                   <option value="true">{t.filingConfig?.yes ?? "Yes"}</option>
                 </select>
-              ) : isProcedureCodeField && transactionTypeCodes.length > 0 ? (
-                <select
-                  value={String(draft[f.key] ?? "")}
-                  onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
-                  disabled={disabled}
-                  className={`w-full rounded-xl border border-border px-3 py-2 text-sm ${disabled ? "opacity-60" : ""}`}
-                >
-                  <option value="">Select...</option>
-                  {transactionTypeCodes.map((code) => (
-                    <option key={code} value={code}>
-                      {code}
-                    </option>
-                  ))}
-                </select>
+              ) : isActionField ? (
+                loadingActions ? (
+                  <div className="text-xs text-ink-muted py-2">Loading actions...</div>
+                ) : availableActions.length > 0 ? (
+                  <select
+                    value={String(draft[f.key] ?? "")}
+                    onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                    disabled={disabled}
+                    className={`w-full rounded-xl border border-border px-3 py-2 text-sm ${disabled ? "opacity-60" : ""}`}
+                  >
+                    <option value="">Select action...</option>
+                    {availableActions.map((action) => (
+                      <option key={action} value={action}>
+                        {action}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    type="text"
+                    placeholder="e.g., SUBMIT, AMENDMENT"
+                    value={String(draft[f.key] ?? "")}
+                    onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                    disabled={disabled}
+                  />
+                )
+              ) : needsCascadingDropdowns && isCountryField ? (
+                loadingCascadeData ? (
+                  <div className="text-xs text-ink-muted py-2">Loading countries...</div>
+                ) : availableCountries.length > 0 ? (
+                  <select
+                    value={String(draft[f.key] ?? "")}
+                    onChange={(e) => {
+                      setDraft((d) => ({ ...d, [f.key]: e.target.value, procedureCode: "", messageName: "" }));
+                    }}
+                    disabled={disabled}
+                    className={`w-full rounded-xl border border-border px-3 py-2 text-sm ${disabled ? "opacity-60" : ""}`}
+                  >
+                    <option value="">Select country...</option>
+                    {availableCountries.map((country) => (
+                      <option key={country} value={country}>
+                        {country}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    value={String(draft[f.key] ?? "")}
+                    onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value.toUpperCase() }))}
+                    disabled={disabled}
+                    placeholder="e.g., NL, US, IE"
+                    maxLength={2}
+                    className={disabled ? "opacity-60" : undefined}
+                  />
+                )
+              ) : needsCascadingDropdowns && isProcedureCodeField ? (
+                !draft.country ? (
+                  <div className="text-xs text-ink-muted py-2 px-3 border border-border rounded-xl bg-surface-muted">
+                    Select Country first
+                  </div>
+                ) : availableProcedures.length > 0 ? (
+                  <select
+                    value={String(draft[f.key] ?? "")}
+                    onChange={(e) => {
+                      setDraft((d) => ({ ...d, [f.key]: e.target.value, messageName: "" }));
+                    }}
+                    disabled={disabled}
+                    className={`w-full rounded-xl border border-border px-3 py-2 text-sm ${disabled ? "opacity-60" : ""}`}
+                  >
+                    <option value="">Select procedure...</option>
+                    {availableProcedures.map((proc) => (
+                      <option key={proc} value={proc}>
+                        {proc}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    value={String(draft[f.key] ?? "")}
+                    onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value.toUpperCase() }))}
+                    disabled={disabled}
+                    placeholder="e.g., IMPORT, EXPORT"
+                    className={disabled ? "opacity-60" : undefined}
+                  />
+                )
+              ) : needsCascadingDropdowns && isMessageNameField ? (
+                !draft.country || !draft.procedureCode ? (
+                  <div className="text-xs text-ink-muted py-2 px-3 border border-border rounded-xl bg-surface-muted">
+                    Select Country and Procedure Code first
+                  </div>
+                ) : availableMessages.length > 0 ? (
+                  <select
+                    value={String(draft[f.key] ?? "")}
+                    onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                    disabled={disabled}
+                    className={`w-full rounded-xl border border-border px-3 py-2 text-sm ${disabled ? "opacity-60" : ""}`}
+                  >
+                    <option value="">Select message...</option>
+                    {availableMessages.map((msg) => (
+                      <option key={msg} value={msg}>
+                        {msg}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    value={String(draft[f.key] ?? "")}
+                    onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value.toUpperCase() }))}
+                    disabled={disabled}
+                    placeholder="e.g., IE501, IE503"
+                    className={disabled ? "opacity-60" : undefined}
+                  />
+                )
               ) : f.type === "fieldArray" ? (
                 <FieldArrayEditor
                   itemFields={f.itemFields ?? []}
@@ -524,6 +732,28 @@ function RowFormModal({
                   onChange={(entries) => setDraft((d) => ({ ...d, [f.key]: entries }))}
                   dict={t}
                   dictPath={tableDict(t, table.key)?.fields?.[f.key]?.itemFields}
+                />
+              ) : f.type === "select" ? (
+                <select
+                  value={String(draft[f.key] ?? "")}
+                  onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                  disabled={disabled}
+                  className={`w-full rounded-xl border border-border px-3 py-2 text-sm ${disabled ? "opacity-60" : ""}`}
+                >
+                  <option value="">Select {f.label}...</option>
+                  {(f.options ?? []).map((opt) => (
+                    <option key={opt} value={opt}>
+                      {f.optionLabels?.[opt] || opt}
+                    </option>
+                  ))}
+                </select>
+              ) : f.type === "date" ? (
+                <Input
+                  type="date"
+                  value={draft[f.key] ? new Date(draft[f.key] as string).toISOString().split('T')[0] : ""}
+                  onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                  disabled={disabled}
+                  className={disabled ? "opacity-60" : undefined}
                 />
               ) : (
                 <Input

@@ -47,14 +47,77 @@ export function FilingNewClient() {
 
   function updateDeclarationField(path: string, value: any) {
     setDeclarationData((prev: any) => {
-      const newData = { ...prev };
-      const pathArray = path.split('.');
-      let current = newData;
-      for (let i = 0; i < pathArray.length - 1; i++) {
-        if (!current[pathArray[i]]) current[pathArray[i]] = {};
-        current = current[pathArray[i]];
+      // Deep clone to avoid mutations
+      const newData = JSON.parse(JSON.stringify(prev));
+      
+      // Split path and handle array indices like "Amendment[0].Documents[1].Name"
+      const pathParts: Array<string | number> = [];
+      path.split('.').forEach(part => {
+        const arrayMatch = part.match(/^(.+?)\[(\d+)\]$/);
+        if (arrayMatch) {
+          pathParts.push(arrayMatch[1]); // array name
+          pathParts.push(parseInt(arrayMatch[2])); // array index
+        } else {
+          pathParts.push(part);
+        }
+      });
+      
+      // Navigate to the target location, creating structure as needed
+      let current: any = newData;
+      for (let i = 0; i < pathParts.length - 1; i++) {
+        const key = pathParts[i];
+        const nextKey = pathParts[i + 1];
+        
+        // Handle the current key
+        if (typeof key === 'number') {
+          // Current key is an array index
+          if (!Array.isArray(current)) {
+            console.error('❌ Expected array but got:', typeof current);
+            return prev; // Return unchanged data
+          }
+          
+          // Ensure array has enough elements
+          while (current.length <= key) {
+            current.push({});
+          }
+          
+          // Move into this array element
+          current = current[key];
+        } else {
+          // Current key is a property name
+          if (current[key] === undefined || current[key] === null) {
+            // Determine if we need to create an array or object
+            if (typeof nextKey === 'number') {
+              // Next key is an array index, so create an array
+              current[key] = [];
+            } else {
+              // Next key is a string, so create an object
+              current[key] = {};
+            }
+          }
+          
+          // Move into this property
+          current = current[key];
+        }
       }
-      current[pathArray[pathArray.length - 1]] = value;
+      
+      // Set the final value
+      const lastKey = pathParts[pathParts.length - 1];
+      if (typeof lastKey === 'number') {
+        // Setting an array element
+        if (!Array.isArray(current)) {
+          console.error('❌ Expected array for final key but got:', typeof current);
+          return prev;
+        }
+        while (current.length <= lastKey) {
+          current.push(null);
+        }
+        current[lastKey] = value;
+      } else {
+        // Setting an object property
+        current[lastKey] = value;
+      }
+      
       return newData;
     });
   }
@@ -241,25 +304,6 @@ export function FilingNewClient() {
           </Alert>
         )}
 
-        {/* Filing Information */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h4 className="text-xs font-bold text-ink mb-3">Filing Information</h4>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-            <div>
-              <span className="text-ink-muted font-bold">Country</span>
-              <p className="text-ink font-mono">{country || "—"}</p>
-            </div>
-            <div>
-              <span className="text-ink-muted font-bold">Procedure Code</span>
-              <p className="text-ink font-mono">{procedure || "—"}</p>
-            </div>
-            <div>
-              <span className="text-ink-muted font-bold">Message Name</span>
-              <p className="text-ink font-mono">{message || "—"}</p>
-            </div>
-          </div>
-        </div>
-
         {/* Local Reference Number and Registration Number */}
         <div className="bg-surface border border-border rounded-lg p-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -275,9 +319,6 @@ export function FilingNewClient() {
                 placeholder="Enter local reference number"
                 className="mt-1"
               />
-              <p className="text-xs text-ink-muted mt-1">
-                Required for save and transmit.
-              </p>
             </div>
             <div>
               <Label htmlFor="registrationNumber" className="text-xs font-bold text-ink">
@@ -291,9 +332,6 @@ export function FilingNewClient() {
                 placeholder="Enter registration number"
                 className="mt-1"
               />
-              <p className="text-xs text-ink-muted mt-1">
-                Optional registration or license number.
-              </p>
             </div>
           </div>
         </div>

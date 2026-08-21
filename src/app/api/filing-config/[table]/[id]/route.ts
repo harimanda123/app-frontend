@@ -26,10 +26,10 @@ export const PATCH = withAuthenticatedRoute<Params>(async ({ req, ctx, params, r
   if ("response" in body) return body.response;
 
   try {
-    // Add updatedBy from authenticated user
+    // Add updatedBy from authenticated user (using email as human-readable identifier)
     const dataWithUser = {
       ...(body.data as Record<string, unknown>),
-      updatedBy: ctx.userId,
+      updatedBy: ctx.email,
     };
     const row = await table.update(params.id, dataWithUser);
     return NextResponse.json({ row, requestId });

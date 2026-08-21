@@ -36,6 +36,8 @@ export default async function FilingConfigPage() {
     "action-configuration",
     "action-data-requirement",
     "ui-configuration",
+    "country-customs-version",
+    "customer-customs-version",
     // "master-data-source" - removed, will implement later
   ];
   

@@ -793,20 +793,88 @@ export function FilingDetailClient({
     }
   }
 
-  // Helper to update nested declaration data
+  // Helper to update nested declaration data (supports array notation)
   function updateDeclarationField(path: string, value: any) {
+    console.log('🔵 updateDeclarationField called:', { path, value: typeof value === 'object' ? JSON.stringify(value).slice(0, 100) : value });
+    
     setDeclarationData((prev) => {
-      const keys = path.split('.');
-      const newData = { ...prev };
-      let current: any = newData;
+      // Deep clone to avoid mutations
+      const newData = JSON.parse(JSON.stringify(prev));
       
-      for (let i = 0; i < keys.length - 1; i++) {
-        if (!current[keys[i]]) current[keys[i]] = {};
-        current[keys[i]] = { ...current[keys[i]] };
-        current = current[keys[i]];
+      // Split path and handle array indices like "Amendment[0].Documents[1].Name"
+      const pathParts: Array<string | number> = [];
+      path.split('.').forEach(part => {
+        const arrayMatch = part.match(/^(.+?)\[(\d+)\]$/);
+        if (arrayMatch) {
+          pathParts.push(arrayMatch[1]); // array name
+          pathParts.push(parseInt(arrayMatch[2])); // array index
+        } else {
+          pathParts.push(part);
+        }
+      });
+      
+      console.log('🟢 Path parts:', pathParts);
+      
+      // Navigate to the target location, creating structure as needed
+      let current: any = newData;
+      for (let i = 0; i < pathParts.length - 1; i++) {
+        const key = pathParts[i];
+        const nextKey = pathParts[i + 1];
+        
+        // Handle the current key
+        if (typeof key === 'number') {
+          // Current key is an array index
+          // current should already be an array from previous iteration
+          if (!Array.isArray(current)) {
+            console.error('❌ Expected array but got:', typeof current, 'at path part', i, 'key:', key);
+            return prev; // Return unchanged data
+          }
+          
+          // Ensure array has enough elements
+          while (current.length <= key) {
+            current.push({});
+          }
+          
+          // Move into this array element
+          current = current[key];
+        } else {
+          // Current key is a property name
+          if (current[key] === undefined || current[key] === null) {
+            // Determine if we need to create an array or object
+            if (typeof nextKey === 'number') {
+              // Next key is an array index, so create an array
+              current[key] = [];
+              console.log('🟡 Created array at:', key);
+            } else {
+              // Next key is a string, so create an object
+              current[key] = {};
+              console.log('🟡 Created object at:', key);
+            }
+          }
+          
+          // Move into this property
+          current = current[key];
+        }
       }
       
-      current[keys[keys.length - 1]] = value;
+      // Set the final value
+      const lastKey = pathParts[pathParts.length - 1];
+      if (typeof lastKey === 'number') {
+        // Setting an array element
+        if (!Array.isArray(current)) {
+          console.error('❌ Expected array for final key but got:', typeof current, 'lastKey:', lastKey);
+          return prev;
+        }
+        while (current.length <= lastKey) {
+          current.push(null);
+        }
+        current[lastKey] = value;
+      } else {
+        // Setting an object property
+        current[lastKey] = value;
+      }
+      
+      console.log('✅ Updated data structure:', JSON.stringify(newData).slice(0, 200));
       return newData;
     });
   }
@@ -1003,25 +1071,6 @@ export function FilingDetailClient({
         </div>
       )}
 
-      {/* Filing Information - Always visible above tabs */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <h4 className="text-xs font-bold text-ink mb-3">Filing Information</h4>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-          <div>
-            <span className="text-ink-muted font-bold">Country</span>
-            <p className="text-ink font-mono">{filing.country || "—"}</p>
-          </div>
-          <div>
-            <span className="text-ink-muted font-bold">Procedure Code</span>
-            <p className="text-ink font-mono">{filing.procedureCode || "—"}</p>
-          </div>
-          <div>
-            <span className="text-ink-muted font-bold">Message Name</span>
-            <p className="text-ink font-mono">{filing.messageName || "—"}</p>
-          </div>
-        </div>
-      </div>
-
       {/* Local Reference Number and Registration Number */}
       <div className="bg-surface border border-border rounded-lg p-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1038,9 +1087,6 @@ export function FilingDetailClient({
               className="mt-1"
               disabled={filing.filingStatus === "Transmitted" || filing.filingStatus === "Accepted"}
             />
-            <p className="text-xs text-ink-muted mt-1">
-              Defaults to entry number. Required for save and transmit.
-            </p>
           </div>
           <div>
             <Label htmlFor="registrationNumber" className="text-xs font-bold text-ink">
@@ -1055,9 +1101,6 @@ export function FilingDetailClient({
               className="mt-1"
               disabled={filing.filingStatus === "Transmitted" || filing.filingStatus === "Accepted"}
             />
-            <p className="text-xs text-ink-muted mt-1">
-              Optional registration or license number.
-            </p>
           </div>
         </div>
       </div>
